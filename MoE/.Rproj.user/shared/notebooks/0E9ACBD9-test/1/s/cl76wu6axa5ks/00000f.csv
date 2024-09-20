@@ -1,0 +1,30 @@
+"0","p1 <- ggplot(data, aes(x = x1, y = x2, color = cluster)) +"
+"0","  geom_point() +"
+"0","  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +"
+"0","  labs(title = ""Mixture of Experts avec flexmix (Données bivariées)"", x = ""x1"", y = ""x2"") +"
+"0","  scale_shape_manual(values = c(1, 2, 3)) +"
+"0","  theme_minimal()"
+"0","p2 <- ggplot(data, aes(x = x1, y = x2, color = cluster)) +"
+"0","  geom_point() +"
+"0","  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +"
+"0","  labs(title = ""Mixture of Experts à la main (Données bivariées)"", x = ""x1"", y = ""x2"") +"
+"0","  scale_shape_manual(values = c(1, 2, 3)) +"
+"0","  theme_minimal()"
+"0",""
+"0","p1"
+"1","[1m[33mError[39m in `geom_point()`:[22m
+[38;5;232m[33m![38;5;232m Problem while computing aesthetics.
+[36mℹ[38;5;232m Error occurred in the 2nd layer.[39m
+[1mCaused by error:[22m
+[33m![39m objet 'cluster_pred' introuvable
+Backtrace:
+[90m  1. [39m[1mbase[22m (local) `<fn>`(x)
+[90m  2. [39mggplot2:::print.ggplot(x)
+[90m  4. [39mggplot2:::ggplot_build.ggplot(x)
+[90m  5. [39mggplot2:::by_layer(...)
+[90m 12. [39mggplot2 (local) f(l = layers[[i]], d = data[[i]])
+[90m 13. [39ml$compute_aesthetics(d, plot)
+[90m 14. [39mggplot2 (local) compute_aesthetics(..., self = self)
+[90m 15. [39m[1mbase[22m::lapply(aesthetics, eval_tidy, data = data, env = env)
+[90m 16. [39m[1mrlang[22m (local) FUN(X[[i]], ...)
+"

@@ -1,0 +1,5 @@
+"0","res2 <- moe_gaussian_final(X_tild, y, G=2, max_iter = 10000)"
+"1","[1]"
+"1"," ""Convergence atteinte à l'itération 4815"""
+"1","
+"

@@ -1,0 +1,5 @@
+"0","y <- numeric(n)"
+"0","y[clusters_true == 1] <- 3 * x1[clusters_true == 1] - 2 * x2[clusters_true == 1] + rnorm(sum(clusters_true == 1))"
+"0","y[clusters_true == 2] <- -2 * x1[clusters_true == 2] + 4 * x2[clusters_true == 2] + 5 + rnorm(sum(clusters_true == 2))"
+"0","y[clusters_true == 3] <- 0.5 * x1[clusters_true == 3] + 3 * x2[clusters_true == 3] - 2 + rnorm(sum(clusters_true == 3))"
+"0","plot(y, col=as.factor(clusters_true), pch=19)"

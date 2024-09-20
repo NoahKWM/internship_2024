@@ -1,0 +1,24 @@
+"0","library(MASS)"
+"0","library(ggplot2)"
+"0","library(magrittr)"
+"0","library(dplyr)"
+"2","
+Attachement du package : ‘dplyr’
+
+"
+"2","L'objet suivant est masqué depuis ‘package:MASS’:
+
+    select
+
+"
+"2","Les objets suivants sont masqués depuis ‘package:stats’:
+
+    filter, lag
+
+"
+"2","Les objets suivants sont masqués depuis ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+"
+"0","source(""moe_functions.R"")"

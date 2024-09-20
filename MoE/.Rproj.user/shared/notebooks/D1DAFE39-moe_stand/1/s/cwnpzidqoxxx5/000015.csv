@@ -1,0 +1,7 @@
+"0","library(flexmix)"
+"0",""
+"0","# Définir le modèle de mélange de régressions"
+"0","model <- flexmix(y ~ x0 + x1 + x2, data = data, k = G)"
+"2","Erreur dans FLXfit(model = model, concomitant = concomitant, control = control,  : 
+     1 Log-likelihood: NA
+"

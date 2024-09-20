@@ -1,0 +1,764 @@
+library(MASS)
+library(ggplot2)
+library(magrittr)
+library(dplyr)
+library(flexmix)
+library(gridExtra)
+library(rgl)
+source("moe_functions.R")
+
+######################################################################################################
+###### This file contains tests for Standard MoE algorithms as well as comparisons with Flexmix ######
+######################################################################################################
+
+
+# Mixed ----
+set.seed(123)
+n <- 300
+x1 <- rnorm(n, 0, 1) # dim 1
+x2 <- rnorm(n, 1, 0.6) # dim 2
+clusters_true <- c(rep(1,n/3), rep(2,n/3), rep(3,n/3))
+
+## ---- 1e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 3 * x1[clusters_true == 1] - 2 * x2[clusters_true == 1] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * x1[clusters_true == 2] + 4 * x2[clusters_true == 2] + 5 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 0.5 * x1[clusters_true == 3] + 3 * x2[clusters_true == 3] - 2 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19, main="Values of y for each group")
+data <- data.frame(x1 = x1, x2 = x2, y = y, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+# entrainement flexmix
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+# entrainement hand
+set.seed(123)
+X_tild <- cbind(rep(1,n), x1, x2)
+res <- moe_stand_final(X_tild, y, 3, max_iter=2500)
+
+# data test
+n_test <- 120
+x1_test <- rnorm(n_test, 0, 1) # dim 1
+x2_test <- rnorm(n_test, 1, 0.6) # dim 2
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3), rep(3,n_test/3))
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 3 * x1_test[clusters_test == 1] - 2 * x2_test[clusters_test == 1] + rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * x1_test[clusters_test == 2] + 4 * x2_test[clusters_test == 2] + 5 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- 0.5 * x1_test[clusters_test == 3] + 3 * x2_test[clusters_test == 3] - 2 + rnorm(sum(clusters_test == 3))
+plot(y_test, col=as.factor(clusters_test), pch=19, main="Values of y for each group")
+data_test <- data.frame(x1 = x1_test, x2 = x2_test, y = y_test, cluster = as.factor(clusters_test))
+
+# test flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), x1_test, x2_test)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+## ---- 2e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 3 * x1[clusters_true == 1] - 2 * x2[clusters_true == 1] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * x1[clusters_true == 2] + 5 * x2[clusters_true == 2] + 10 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 3 * x1[clusters_true == 3] + 3 * x2[clusters_true == 3] - 10 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+data <- data.frame(x1 = x1, x2 = x2, y = y, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+X_tild <- cbind(rep(1,n), x1, x2)
+res <- moe_stand_final(X_tild, y, 3)
+
+# data test
+n_test <- 120
+x1_test <- rnorm(n_test, 0, 1) # dim 1
+x2_test <- rnorm(n_test, 1, 0.6) # dim 2
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3), rep(3,n_test/3))
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 3 * x1_test[clusters_test == 1] - 2 * x2_test[clusters_test == 1] + rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * x1_test[clusters_test == 2] + 5 * x2_test[clusters_test == 2] + 10 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- 3 * x1_test[clusters_test == 3] + 3 * x2_test[clusters_test == 3] - 10 + rnorm(sum(clusters_test == 3))
+plot(y_test, col=as.factor(clusters_test), pch=19, main="Values of y for each group")
+data_test <- data.frame(x1 = x1_test, x2 = x2_test, y = y_test, cluster = as.factor(clusters_test))
+
+# test flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), x1_test, x2_test)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+## ---- 3e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 1 * x1[clusters_true == 1] - 1 * x2[clusters_true == 1] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * x1[clusters_true == 2] + 4 * x2[clusters_true == 2] + 15 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 0.5 * x1[clusters_true == 3] + 3 * x2[clusters_true == 3] - 20 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+data <- data.frame(x1 = x1, x2 = x2, y = y, cluster = as.factor(clusters_true))
+
+library(rgl)
+plot3d(data$x1, data$x2, y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+pred <- predict(model, newdata = data)
+clusters_pred <- clusters(model)
+data$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_true)
+
+X_tild <- cbind(rep(1,n), x1, x2)
+res <- moe_stand_final(X_tild, y, 3)
+class <- apply(res$tau, 1, which.max)
+table(class, clusters_true)
+
+p1 <- ggplot(data, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+# Mixed v2 ----
+set.seed(123)
+n <- 300
+G1 <- mvrnorm(n/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G2 <- mvrnorm(n/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G3 <- mvrnorm(n/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                           c(0,0.5)))
+clusters_true <- c(rep(1,n/3), rep(2,n/3),rep(3,n/3))
+
+## ---- 1e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 3 * G1[,1] + -2 * G1[,2] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * G2[,1] + 4 * G2[,2] + 5 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 0.5 * G3[,1] + -3 * G3[,2] - 2 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+X <- rbind(G1,G2,G3)
+data <- data.frame(x1 = X[,1], x2 = X[,2], y = y, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+# train
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+X_tild <- cbind(rep(1,n), data$x1, data$x2)
+res <- moe_stand_final(X_tild, y, 3, max_iter=1000)
+
+# Test
+n_test <- 90
+G1_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G2_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G3_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3),rep(3,n_test/3))
+
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 3 * G1_test[,1] + -2 * G1_test[,2] + rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * G2_test[,1] + 4 * G2_test[,2] + 5 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- 0.5 * G3_test[,1] + -3 * G3_test[,2] - 2 + rnorm(sum(clusters_test == 3))
+plot(y_test, col=as.factor(clusters_test), pch=19)
+X_test <- rbind(G1_test,G2_test,G3_test)
+data_test <- data.frame(x1 = X_test[,1], x2 = X_test[,2], y = y_test, cluster = as.factor(clusters_test))
+
+
+# tets flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), data_test$x1, data_test$x2)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+## ---- 2e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 3 * G1[,1] - 2 * G1[,2] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * G2[,1] + 4 * G2[,2] + 10 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 3 * G3[,1] + 3 * G3[,2] - 10 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+X <- rbind(G1,G2,G3)
+data <- data.frame(x1 = X[,1], x2 = X[,2], y = y, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+X_tild <- cbind(rep(1,n), data$x1, data$x2)
+res <- moe_stand_final(X_tild, y, 3, max_iter=1000)
+
+# Test
+n_test <- 90
+G1_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G2_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G3_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3),rep(3,n_test/3))
+
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 3 * G1_test[,1] - 2 * G1_test[,2] + rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * G2_test[,1] + 4 * G2_test[,2] + 10 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- 3 * G3_test[,1] + 3 * G3_test[,2] - 10 + rnorm(sum(clusters_test == 3))
+plot(y_test, col=as.factor(clusters_test), pch=19)
+X_test <- rbind(G1_test,G2_test,G3_test)
+data_test <- data.frame(x1 = X_test[,1], x2 = X_test[,2], y = y_test, cluster = as.factor(clusters_test))
+
+
+# tets flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), data_test$x1, data_test$x2)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+## ---- 3e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 1 * G1[,1] - 1 * G1[,2] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * G2[,1] + 4 * G2[,2] + 15 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 0.5 * G3[,1] + 2 * G3[,2] - 15 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+X <- rbind(G1,G2,G3)
+data <- data.frame(x1 = X[,1], x2 = X[,2], y = y, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+X_tild <- cbind(rep(1,n), data$x1, data$x2)
+res <- moe_stand_final(X_tild, y, 3, max_iter=1000)
+
+# Test
+n_test <- 90
+G1_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G2_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G3_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3),rep(3,n_test/3))
+
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 1 * G1_test[,1] - 1 * G1_test[,2] + rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * G2_test[,1] + 4 * G2_test[,2] + 15 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- 0.5 * G3_test[,1] + 2 * G3_test[,2] - 15 + rnorm(sum(clusters_test == 3))
+plot(y_test, col=as.factor(clusters_test), pch=19)
+X_test <- rbind(G1_test,G2_test,G3_test)
+data_test <- data.frame(x1 = X_test[,1], x2 = X_test[,2], y = y_test, cluster = as.factor(clusters_test))
+
+
+# tets flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), data_test$x1, data_test$x2)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+# Distinct ----
+set.seed(123)
+n <- 300
+G1 <- mvrnorm(n/3, c(4,4), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G2 <- mvrnorm(n/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G3 <- mvrnorm(n/3, c(-4,2), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+clusters_true <- c(rep(1,n/3), rep(2,n/3),rep(3,n/3))
+
+## ---- 1e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 2 * G1[,1] + -4 * G1[,2] - 3+ rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * G2[,1] - 4 * G2[,2] + 15 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 4 * G3[,1] + 2 * G3[,2] - 20 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+X <- rbind(G1,G2,G3)
+data <- data.frame(x1 = X[,1], x2 = X[,2], y = y, cluster = as.factor(clusters_true))
+# data <- data.frame(x1 = X[,1], x2 = X[,2], y = y)
+# data <- scale(data)
+# data <- data.frame(data, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+X_tild <- cbind(rep(1,n), data$x1, data$x2)
+res <- moe_stand_final(X_tild, y, 3, max_iter=2500)
+
+# Test
+n_test <- 90
+G1_test <- mvrnorm(n_test/3, c(4,4), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G2_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                         c(0,0.5)))
+G3_test <- mvrnorm(n_test/3, c(-4,2), Sigma = rbind(c(0.5,0), # Group 1
+                                          c(0,0.5)))
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3),rep(3,n_test/3))
+
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 2 * G1_test[,1] + -4 * G1_test[,2] - 3+ rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * G2_test[,1] - 4 * G2_test[,2] + 15 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- 4 * G3_test[,1] + 2 * G3_test[,2] - 20 + rnorm(sum(clusters_test == 3))
+
+X_test <- rbind(G1_test,G2_test,G3_test)
+data_test <- data.frame(x1 = X_test[,1], x2 = X_test[,2], y = y_test, cluster = as.factor(clusters_test))
+
+
+# tets flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), data_test$x1, data_test$x2)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+## ---- 2e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 3 * G1[,1] - 2 * G1[,2] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * G2[,1] + 4 * G2[,2] + 15 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- -3 * G3[,1] + 3 * G3[,2] - 5+ rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+X <- rbind(G1,G2,G3)
+data <- data.frame(x1 = X[,1], x2 = X[,2], y = y, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+model <- flexmix(y ~ x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+X_tild <- cbind(rep(1,n), data$x1, data$x2)
+res <- moe_stand_final(X_tild, y, 3, max_iter=2500)
+
+# Test
+n_test <- 120
+G1_test <- mvrnorm(n_test/3, c(4,4), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G2_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G3_test <- mvrnorm(n_test/3, c(-4,2), Sigma = rbind(c(0.5,0), # Group 1
+                                                    c(0,0.5)))
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3),rep(3,n_test/3))
+
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 3 * G1_test[,1] - 2 * G1_test[,2] + rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * G2_test[,1] + 4 * G2_test[,2] + 15 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- -3 * G3_test[,1] + 3 * G3_test[,2] - 5+ rnorm(sum(clusters_test == 3))
+plot(y_test, col=as.factor(clusters_test), pch=19)
+X_test <- rbind(G1_test,G2_test,G3_test)
+data_test <- data.frame(x1 = X_test[,1], x2 = X_test[,2], y = y_test, cluster = as.factor(clusters_test))
+
+# tets flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), data_test$x1, data_test$x2)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)
+
+## ---- 3e ex ----
+y <- numeric(n)
+y[clusters_true == 1] <- 1 * G1[,1] - 1 * G1[,2] + rnorm(sum(clusters_true == 1))
+y[clusters_true == 2] <- -2 * G2[,1] + 4 * G2[,2] + 15 + rnorm(sum(clusters_true == 2))
+y[clusters_true == 3] <- 0.5 * G3[,1] + 2 * G3[,2] - 10 + rnorm(sum(clusters_true == 3))
+plot(y, col=as.factor(clusters_true), pch=19)
+X <- rbind(G1,G2,G3)
+data <- data.frame(x1 = X[,1], x2 = X[,2], y = y, cluster = as.factor(clusters_true))
+
+# Ajuster un modèle linéaire pour chaque groupe
+fit1 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 1))
+fit2 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 2))
+fit3 <- lm(y ~ x1 + x2, data = data, subset = (cluster == 3))
+
+# Créer une grille de points pour x1 et x2
+x1_seq <- seq(min(data$x1), max(data$x1), length.out = 30)
+x2_seq <- seq(min(data$x2), max(data$x2), length.out = 30)
+grid <- expand.grid(x1 = x1_seq, x2 = x2_seq)
+
+# Calculer y pour chaque point de la grille en utilisant les coefficients des modèles linéaires
+grid$y1 <- predict(fit1, newdata = grid)
+grid$y2 <- predict(fit2, newdata = grid)
+grid$y3 <- predict(fit3, newdata = grid)
+
+# Tracer les points et les hyperplans dans l'espace 3D
+plot3d(data$x1, data$x2, data$y, col = as.numeric(data$cluster), pch = 19, cex = 1.5, colkey = FALSE,
+       xlab = "x1 Axis", ylab = "x2 Axis", zlab = "Y Axis",
+       main = "Graphique 3D")
+
+# Ajouter les hyperplans
+surface3d(x1_seq, x2_seq, matrix(grid$y1, nrow = 30, ncol = 30), alpha = 0.5, col = 'red')
+surface3d(x1_seq, x2_seq, matrix(grid$y2, nrow = 30, ncol = 30), alpha = 0.5, col = 'green')
+surface3d(x1_seq, x2_seq, matrix(grid$y3, nrow = 30, ncol = 30), alpha = 0.5, col = 'blue')
+
+# train
+model <- flexmix(y ~ x1 + x2 | x1 + x2, data = data, k = 3, model = FLXMRglm(family = "gaussian"))
+summary(model)
+parameters(model)
+
+X_tild <- cbind(rep(1,n), data$x1, data$x2)
+res <- moe_stand_final(X_tild, y, 3, max_iter=1000)
+
+
+# Test
+n_test <- 120
+G1_test <- mvrnorm(n_test/3, c(4,4), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G2_test <- mvrnorm(n_test/3, c(0,0), Sigma = rbind(c(0.5,0), # Group 1
+                                                   c(0,0.5)))
+G3_test <- mvrnorm(n_test/3, c(-4,2), Sigma = rbind(c(0.5,0), # Group 1
+                                                    c(0,0.5)))
+clusters_test <- c(rep(1,n_test/3), rep(2,n_test/3),rep(3,n_test/3))
+
+y_test <- numeric(n_test)
+y_test[clusters_test == 1] <- 1 * G1_test[,1] - 1 * G1_test[,2] + rnorm(sum(clusters_test == 1))
+y_test[clusters_test == 2] <- -2 * G2_test[,1] + 4 * G2_test[,2] + 15 + rnorm(sum(clusters_test == 2))
+y_test[clusters_test == 3] <- 0.5 * G3_test[,1] + 2 * G3_test[,2] - 10 + rnorm(sum(clusters_test == 3))
+plot(y_test, col=as.factor(clusters_test), pch=19)
+X_test <- rbind(G1_test,G2_test,G3_test)
+data_test <- data.frame(x1 = X_test[,1], x2 = X_test[,2], y = y_test, cluster = as.factor(clusters_test))
+
+# tets flexmix
+pred <- predict(model, newdata = data_test)
+clusters_pred <- clusters(model, newdata = data_test)
+data_test$cluster_pred <- as.factor(clusters_pred)
+table(clusters_pred, clusters_test)
+
+# test hand
+X_tild <- cbind(rep(1,n_test), data_test$x1, data_test$x2)
+eta_test <- eta_f(gamma = res$gamma, X = X_tild)
+class <- apply(tau_f_stand(X_tild, y_test, res$beta, res$sigma, eta_test), 1, which.max)
+table(class, clusters_test)
+
+
+p1 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = cluster_pred), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts avec flexmix (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+p2 <- ggplot(data_test, aes(x = x1, y = x2, color = cluster)) +
+  geom_point() +
+  geom_point(aes(shape = as.factor(class)), size = 3, alpha = 0.5) +
+  labs(title = "Mixture of Experts à la main (Données bivariées)", x = "x1", y = "x2") +
+  scale_shape_manual(values = c(1, 2, 3)) +
+  theme_minimal()
+grid.arrange(p1, p2, ncol = 2)

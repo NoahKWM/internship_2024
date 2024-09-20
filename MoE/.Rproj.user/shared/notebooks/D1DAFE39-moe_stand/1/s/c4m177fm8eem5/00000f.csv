@@ -1,0 +1,4 @@
+"0","gamma_h <- matrix(c(0,0,0,1,1,1), ncol=G)"
+"0","beta_h <- matrix(c(1,1,1,1,1,1), ncol=G)"
+"0","sigma_h <- c(1,1)"
+"0","res <- moe_stand(X_tild, y, gamma_h, beta_h, sigma_h)"
